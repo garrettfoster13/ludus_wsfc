@@ -1,0 +1,76 @@
+---
+- name: Enable update service
+  ansible.windows.win_service:
+    name: Windows Update
+    state: started
+    start_mode: auto
+
+- name: Disable firewall
+  community.windows.win_firewall:
+    state: disabled
+    profiles:
+      - Domain
+      - Public
+      - Private
+
+- name: Install iSCSI target server feature
+  ansible.windows.win_feature:
+    name:
+      - FS-iSCSITarget-Server
+    include_management_tools: true
+    state: present
+  register: feature_install
+
+#https://docs.ansible.com/projects/ansible/latest/collections/microsoft/ad/ou_module.html
+- name: Stage Cluster OU
+  microsoft.ad.ou:
+    name: cluster
+    path: DC=ludus,DC=domain
+    state: present
+    protect_from_deletion: false #set to false for testing, you can set to true if you want
+
+#https://docs.ansible.com/projects/ansible/latest/collections/microsoft/ad/computer_module.html
+- name: Create CNO computer object
+  microsoft.ad.computer:
+    name: "CNO"
+    sam_account_name: CNO$
+    dns_hostname: "cno.ludus.domain"
+    path: "OU=cluster,DC=ludus,DC=domain"
+    enabled: false #cluster manager wants to see these disabled to run
+    state: present
+
+- name: Grant GenericAll from CNO to Cluster OU
+  ansible.windows.win_powershell:
+    script: |
+      $TargetOU = "OU=cluster,DC=ludus,DC=domain"
+      $Principal = "CNO"
+      $cno = Get-ADComputer $Principal
+      $sid = New-Object System.Security.Principal.SecurityIdentifier $cno.SID
+      $acl = Get-Acl -Path "AD:\$TargetOU"
+      $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $sid, "GenericAll", "Allow"
+      $acl.AddAccessRule($ace)
+      Set-Acl -Path "AD:\$TargetOU" -AclObject $acl
+    error_action: stop
+
+- name: Prep iSCSI Target Storage
+  ansible.windows.win_powershell:
+    script: |
+      $VDiskName  = "ClusterStorage"
+      $VDiskSizeGB = 10GB
+      $TargetName  = "FailOver"
+      $VDiskPath   = "C:\iSCSIVirtualDisks\$VDiskName.vhdx"
+
+      $AccessServers = @("{{ wsfc_node_1 }}.{{ ludus_domain_fqdn }}", "{{ wsfc_node_2 }}.{{ ludus_domain_fqdn}}", "{{ wsfc_node_3 }}.{{ ludus_domain_fqdn }}")
+
+      $VDiskDir = Split-Path $VDiskPath
+      if (-not (Test-Path $VDiskDir)) {
+          New-Item -ItemType Directory -Path $VDiskDir | Out-Null
+      }
+
+      $DnsIds = $AccessServers | ForEach-Object {
+          "IQN:iqn.1991-05.com.microsoft:$($_.ToLower())"
+      }
+      New-IscsiVirtualDisk -Path $VDiskPath -Size $VDiskSizeGB
+      New-IscsiServerTarget -TargetName $TargetName -InitiatorIds $DnsIds
+      Add-IscsiVirtualDiskTargetMapping -TargetName $TargetName -Path $VDiskPath
+

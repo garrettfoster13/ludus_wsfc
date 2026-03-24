@@ -1,0 +1,66 @@
+---
+- name: Enable update service
+  ansible.windows.win_service:
+    name: Windows Update
+    state: started
+    start_mode: auto
+
+- name: Enable iscsi service
+  ansible.windows.win_service:
+    name: MSiSCSI
+    state: started
+    start_mode: auto
+
+
+- name: Install Failover Clustering and File Server features
+  ansible.windows.win_feature:
+    name:
+      - Failover-Clustering
+      - FS-FileServer
+    include_management_tools: true
+    state: present
+  register: feature_install
+
+
+- name: Add IscsiServerTarget
+  ansible.windows.win_powershell:
+    script: |
+
+      $TargetName = "FailOver"
+      $DCIP = "{{ ludus_dc_ip }}"
+
+      # Add portal if not already present
+      $portal = Get-IscsiTargetPortal -TargetPortalAddress $DCIP -ErrorAction SilentlyContinue
+      if (-not $portal) {
+          New-IscsiTargetPortal -TargetPortalAddress $DCIP
+      }
+
+      # Discover targets
+      Update-IscsiTarget
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  register: cluster_create
+
+- name: Pause for 30 seconds to let the target update
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: Connect to IscsiTarget
+  ansible.windows.win_powershell:
+    script: | 
+      $target = Get-IscsiTarget
+      Connect-IscsiTarget -NodeAddress $target.NodeAddress -IsPersistent $true
+
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+  register: cluster_create
+
+

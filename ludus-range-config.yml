@@ -1,0 +1,78 @@
+ludus:
+  - vm_name: "{{ range_id }}-DC01"
+    hostname: "DC01"
+    template: win2022-server-x64-template
+    vlan: 10
+    ip_last_octet: 10
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    domain:
+      fqdn: ludus.domain
+      role: primary-dc
+    roles:
+      - name: prep_dc
+
+  - vm_name: "{{ range_id }}-NODE01"
+    hostname: "NODE01"
+    template: win2022-server-x64-template
+    vlan: 10
+    ip_last_octet: 20
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    domain:
+      fqdn: ludus.domain
+      role: member
+    roles:
+      - name: prep_nodes
+      - name: setup_wsfc
+        depends_on:
+          - vm_name: "{{ range_id }}-NODE01"
+            role: prep_nodes
+          - vm_name: "{{ range_id }}-NODE02"
+            role: prep_nodes
+          - vm_name: "{{ range_id }}-NODE03"
+            role: prep_nodes
+    role_vars:
+      cno_last_octet: "50"
+      vco_last_octet: "51"
+
+  - vm_name: "{{ range_id }}-NODE02"
+    hostname: "NODE02"
+    template: win2022-server-x64-template
+    vlan: 10
+    ip_last_octet: 21
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    domain:
+      fqdn: ludus.domain
+      role: member
+    roles:
+      - name: prep_nodes
+
+  - vm_name: "{{ range_id }}-NODE03"
+    hostname: "NODE03"
+    template: win2022-server-x64-template
+    vlan: 10
+    ip_last_octet: 22
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    domain:
+      fqdn: ludus.domain
+      role: member
+    roles:
+      - name: prep_nodes
+
+
+# needs to match hostname of each node hostname
+global_role_vars:
+  wsfc_node_1: "NODE01" 
+  wsfc_node_2: "NODE02"
+  wsfc_node_3: "NODE03"

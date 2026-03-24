@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: setup_wsfc
+  author: Garrett Foster 
+  description: Sets up the cluster and installs the file share role
+  license: GPL-3.0
+  min_ansible_version: "2.9"
+  platforms:
+    - name: Windows
+      versions:
+        - 2019
+        - 2022
+        - 2025
+
+  galaxy_tags:
+    - windows
+    - security
+    - wsfc
+    - activedirectory
+    - server
+    - ludus

@@ -1,0 +1,91 @@
+---
+- name: Create failover cluster
+  ansible.windows.win_powershell:
+    script: |
+      $ip = "{{ ludus_dc_ip }}"
+      $cnoip = $ip -replace '\.\d+$', '.{{ cno_last_octet }}'
+      New-Cluster -Name "CNO" -Node @("{{ wsfc_node_1 }}", "{{ wsfc_node_2 }}", "{{ wsfc_node_3 }}") -StaticAddress $cnoip -NoStorage
+    error_action: stop
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+
+- name: Bring iSCSI disk online and initialize
+  ansible.windows.win_powershell:
+    script: |
+      $disk = Get-Disk | Where-Object { $_.OperationalStatus -eq 'Offline' -and $_.Size -gt 1GB }
+      if ($disk) {
+        $disk | Set-Disk -IsOffline $false
+        $disk | Set-Disk -IsReadOnly $false
+      }
+      $disk = Get-Disk | Where-Object { $_.PartitionStyle -eq 'RAW' -and $_.Size -gt 1GB }
+      if ($disk) {
+        $disk | Initialize-Disk -PartitionStyle GPT
+      }
+    error_action: stop
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+
+- name: Create volume on data disk with drive letter E
+  ansible.windows.win_powershell:
+    script: |
+      $disk = Get-Disk | Where-Object { $_.PartitionStyle -eq 'GPT' -and $_.Size -gt 1GB }
+      $existing = $disk | Get-Partition | Where-Object { $_.DriveLetter -eq 'E' } -ErrorAction SilentlyContinue
+      if (-not $existing) {
+        $partition = $disk | New-Partition -DriveLetter E -UseMaximumSize
+        $partition | Format-Volume -FileSystem NTFS -NewFileSystemLabel "ClusterData"
+      }
+    error_action: stop
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+
+- name: Add disk to cluster storage
+  ansible.windows.win_powershell:
+    script: |
+      $clusterDisk = Get-ClusterAvailableDisk -Cluster "CNO" -ErrorAction SilentlyContinue
+      if ($clusterDisk) {
+        $clusterDisk | Add-ClusterDisk
+      }
+    error_action: stop
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
+
+
+- name: Create clustered file server role
+  ansible.windows.win_powershell:
+    script: |
+      $ip = "{{ ludus_dc_ip }}"
+      $vcoip = $ip -replace '\.\d+$', '.{{ vco_last_octet }}'
+      $role = Get-ClusterGroup -Cluster "CNO" -Name "VCO" -ErrorAction SilentlyContinue
+      if (-not $role) {
+        $storage = Get-ClusterResource | Where-Object { $_.ResourceType -eq 'Physical Disk' }
+        Add-ClusterFileServerRole -Cluster "CNO" `
+                                  -Name "VCO" `
+                                  -StaticAddress $vcoip `
+                                  -Storage $storage.Name
+      }
+    error_action: stop
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: '{{ ludus_domain_fqdn }}\{{ defaults.ad_domain_admin }}'
+    ansible_become_password: '{{ defaults.ad_domain_admin_password }}'
+    ansible_become_flags: "logon_type=interactive logon_flags=with_profile"
